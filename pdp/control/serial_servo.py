@@ -17,6 +17,7 @@ a config change (`control.backend: serial`) plus firmware, not a rewrite.
 from __future__ import annotations
 
 import logging
+import time
 
 from pdp.control.base import ControlBackend
 
@@ -41,9 +42,32 @@ class SerialServoBackend(ControlBackend):
             ) from exc
 
         self._ser = serial.Serial(self.port, self.baud, timeout=self.timeout)
-        # Most Arduino boards reset when the port opens; give the bootloader time.
         self._ser.reset_input_buffer()
         log.info("control: serial open on %s @ %d", self.port, self.baud)
+        self._wait_ready()
+
+    def _wait_ready(self, timeout_s: float = 5.0) -> None:
+        """Wait for the firmware's READY banner before sending anything.
+
+        Opening the port resets most Arduino boards, and the bootloader takes
+        roughly two seconds. Commands sent during that window are lost with no
+        error anywhere — the rig simply doesn't move and the log looks fine.
+        Waiting for the banner beats a fixed sleep: it is both faster on boards
+        that don't reset and correct on boards that are slower than the guess.
+        """
+        if self._ser is None:  # pragma: no cover - connect() sets it
+            return
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            line = self._ser.readline().decode("ascii", "replace").strip()
+            if line.startswith("READY"):
+                log.info("control: firmware ready (%s)", line)
+                return
+        log.warning(
+            "control: no READY banner within %.1fs. Either the firmware is "
+            "older than this driver or the board didn't reset; continuing.",
+            timeout_s,
+        )
 
     def apply(self, channel: int, target_deg: float, reason: str = "") -> None:
         if self._ser is None:
@@ -53,6 +77,16 @@ class SerialServoBackend(ControlBackend):
             resp = self._ser.readline().decode("ascii", "replace").strip()
             if not resp.startswith("OK"):
                 log.warning("control: unexpected reply %r for ch=%d", resp, channel)
+
+    def ping(self) -> None:
+        """`P` refreshes the firmware watchdog without moving anything."""
+        if self._ser is None:
+            raise RuntimeError("ping() before connect()")
+        self._ser.write(b"P\n")
+        if self.require_ack:
+            resp = self._ser.readline().decode("ascii", "replace").strip()
+            if not resp.startswith("OK"):
+                log.warning("control: unexpected reply %r to ping", resp)
 
     def close(self) -> None:
         if self._ser is not None:

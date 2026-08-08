@@ -174,13 +174,22 @@ log, and speed numbers so you can see what happened.
 
 ## State
 
-Verified working on this machine (RTX 3000 Ada, 8 GB, torch 2.8.0+cu129,
-ultralytics 8.4.116):
+Environment rebuilt and verified 2026-08-08 on this machine — **RTX 4070 Laptop,
+8 GB, driver 580.97** — with Python 3.13.6, torch 2.8.0+cu129, ultralytics
+8.4.116, opencv 5.0.0:
 
-- `check-env`, `cameras`, `build-dataset`, `validate-dataset`, `train`, `val`,
-  `bench`, `export -f onnx`, and `predict` end to end on a real clip
-- YOLO26n at 640, FP16: **25.9 ms mean / 33.5 ms p95 → 38.6 FPS**
-- 40 unit tests, no GPU/camera/hardware required
+- `check-env` reports `cuda_available: True`
+- 40 unit tests pass in 2.3 s (no GPU, camera or hardware needed — but the venv
+  is required, since the tests import `cv2`)
+
+Verified in an earlier session, on a **different** machine (the docs recorded an
+RTX 3000 Ada on driver 595.95), and *not* re-run since the rebuild:
+
+- `cameras`, `build-dataset`, `validate-dataset`, `train`, `val`, `bench`,
+  `export -f onnx`, and `predict` end to end on a real clip
+- YOLO26n at 640, FP16: 25.9 ms mean / 33.5 ms p95 → 38.6 FPS. Treat as a rough
+  expectation, not a measurement of this GPU; re-run `pdp bench` to get real
+  numbers.
 
 Not yet exercised:
 
@@ -200,5 +209,5 @@ annotating anything.
 ## Tests
 
 ```powershell
-pytest            # no GPU, no camera, no hardware required
+pytest            # no GPU, no camera, no hardware required (but do use the venv)
 ```

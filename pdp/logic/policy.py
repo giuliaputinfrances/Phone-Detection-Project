@@ -20,10 +20,6 @@ from pdp.types import Command, Detection, DetectionResult
 log = logging.getLogger(__name__)
 
 
-def _lerp(t: float, lo: float, hi: float) -> float:
-    return lo + (hi - lo) * t
-
-
 def _clamp(v: float, lo: float, hi: float) -> float:
     return lo if v < lo else hi if v > hi else v
 
@@ -59,22 +55,39 @@ class NullPolicy(Policy):
 class PanTiltPolicy(Policy):
     """Aim a 2-axis rig at the highest-priority confirmed target.
 
-    Assumes a camera fixed relative to the pan/tilt base, so a target's position
-    in the image maps directly to an absolute pointing angle. If the camera ends
-    up mounted *on* the moving rig, this becomes a closed loop and should be
-    changed to incremental (error-driven) control instead.
+    The camera is mounted **on** the rig, so this is a closed loop: image
+    position no longer tells you where the target is, it tells you how far off
+    you are aimed. Mapping image position straight to an absolute angle — which
+    is what this class used to do, and what works only for a camera watching
+    from outside — chases its own tail. Centre the target, the computed angle
+    falls back to zero, the rig swings away, and it oscillates forever.
+
+    So we correct on error instead. The offset from frame centre is converted to
+    real degrees through the camera's field of view, and a fraction of it is
+    added to the current commanded angle each frame. Correcting the whole error
+    would overshoot: the servo is still moving while the next frame is captured.
+
+    Commands are emitted on every frame, including when nothing is confirmed, so
+    the rig holds its aim rather than drifting back to neutral each time someone
+    walks in front of the target.
     """
 
     def __init__(self, cfg: PolicyConfig) -> None:
         self.cfg = cfg
         self._tracks: dict[int, TrackState] = {}
-        self._pan: float | None = None
-        self._tilt: float | None = None
+        # Dead reckoning: PWM servos report nothing, but they do obey absolute
+        # positions, so the angle we last commanded is a good estimate of where
+        # the rig actually is.
+        self._pan: float = 0.0
+        self._tilt: float = 0.0
+        self._err_x: float | None = None
+        self._err_y: float | None = None
         self._active_id: int | None = None
 
     def reset(self) -> None:
         self._tracks.clear()
-        self._pan = self._tilt = None
+        self._pan = self._tilt = 0.0
+        self._err_x = self._err_y = None
         self._active_id = None
 
     # -- track bookkeeping -------------------------------------------------
@@ -131,48 +144,75 @@ class PanTiltPolicy(Policy):
             return None
         return self.cfg.ref_distance_m * self.cfg.ref_box_height_px / det.h
 
+    def _commands(self, ts: float, reason: str) -> list[Command]:
+        return [
+            Command("servo", self.cfg.pan_channel, float(self._pan), None, ts, reason),
+            Command("servo", self.cfg.tilt_channel, float(self._tilt), None, ts, reason),
+        ]
+
+    def _step(self, current: float, err_deg: float, invert: bool,
+              limits: tuple[float, float]) -> float:
+        """Move a fraction of the way towards cancelling `err_deg`."""
+        if abs(err_deg) < self.cfg.deadzone_deg:
+            return current  # close enough; moving now would only buzz
+        delta = self.cfg.gain * err_deg
+        if invert:
+            delta = -delta
+        # Clamp the accumulator itself, not just the value sent downstream:
+        # otherwise it winds past the limit while the target sits out of reach
+        # and then owes that much travel before it responds again.
+        return _clamp(current + delta, *limits)
+
     # -- main --------------------------------------------------------------
 
     def update(self, result: DetectionResult) -> list[Command]:
         self._age_tracks(result.detections)
         target = self._select()
+        ts = result.frame.ts_mono
 
         if target is None or target.last is None:
-            # Emit nothing. The control watchdog returns the rig to neutral,
-            # which keeps "what to do when we lose the target" in exactly one
-            # place instead of two.
+            # Hold the current aim. A target that disappears behind a passer-by
+            # almost always reappears where it was, so re-centring the rig would
+            # throw away the framing we just worked to get.
             self._active_id = None
-            return []
+            self._err_x = self._err_y = None
+            return self._commands(ts, "hold: no confirmed target")
 
         det = target.last
         w, h = result.frame.width, result.frame.height
         cx_norm = _clamp(det.cx / max(w, 1), 0.0, 1.0)
         cy_norm = _clamp(det.cy / max(h, 1), 0.0, 1.0)
 
-        pan = _lerp(cx_norm, *self.cfg.pan_range_deg)
-        tilt = _lerp(cy_norm, *self.cfg.tilt_range_deg)
+        # How far off-aim we are, in real degrees. Routing through the field of
+        # view is what makes `gain` a damping factor rather than a number tuned
+        # by trial and error until the rig stops shaking.
+        err_x = (cx_norm - 0.5) * self.cfg.fov_h_deg
+        err_y = (cy_norm - 0.5) * self.cfg.fov_v_deg
 
-        # Reset the smoother when we switch targets, so the rig doesn't sweep
-        # through everything in between.
-        if self._active_id != target.track_id:
-            self._pan, self._tilt = pan, tilt
+        # Smooth the *error*, not the output: this filters detector jitter
+        # before it becomes movement, without adding lag between the servo's
+        # position and what we think it is. Reset on target change, or the rig
+        # sweeps through everything between the old target and the new one.
+        if self._active_id != target.track_id or self._err_x is None:
             self._active_id = target.track_id
+            self._err_x, self._err_y = err_x, err_y
         else:
             a = self.cfg.ema_alpha
-            self._pan = pan if self._pan is None else a * pan + (1 - a) * self._pan
-            self._tilt = tilt if self._tilt is None else a * tilt + (1 - a) * self._tilt
+            self._err_x = a * err_x + (1 - a) * self._err_x
+            self._err_y = a * err_y + (1 - a) * (self._err_y or 0.0)
+
+        self._pan = self._step(self._pan, self._err_x, self.cfg.invert_pan,
+                               self.cfg.pan_range_deg)
+        self._tilt = self._step(self._tilt, self._err_y, self.cfg.invert_tilt,
+                                self.cfg.tilt_range_deg)
 
         dist = self.distance_m(det)
         reason = (
             f"track={target.track_id} cls={det.cls_name} conf={det.conf:.2f} "
-            f"zone={self.zone_of(cx_norm)}"
+            f"zone={self.zone_of(cx_norm)} err={self._err_x:+.1f},{self._err_y:+.1f}deg"
             + (f" ~{dist:.2f}m" if dist is not None else "")
         )
-        ts = result.frame.ts_mono
-        return [
-            Command("servo", self.cfg.pan_channel, float(self._pan), None, ts, reason),
-            Command("servo", self.cfg.tilt_channel, float(self._tilt), None, ts, reason),
-        ]
+        return self._commands(ts, reason)
 
 
 def build_policy(cfg: PolicyConfig) -> Policy:

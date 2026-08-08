@@ -83,11 +83,24 @@ class PolicyConfig:
     min_hits: int = 3  # frames a track must persist before it can drive a servo
     max_misses: int = 5  # frames a track survives without a detection
     zones: list[ZoneConfig] = field(default_factory=list)
-    ema_alpha: float = 0.35  # target smoothing; lower = smoother, more lag
+    ema_alpha: float = 0.35  # error smoothing; lower = smoother, more lag
     pan_channel: int = 0
     tilt_channel: int = 1
+    # Travel limits. With closed-loop aiming these bound the accumulated
+    # commanded angle, not a direct mapping from image position.
     pan_range_deg: tuple[float, float] = (-45.0, 45.0)
     tilt_range_deg: tuple[float, float] = (-30.0, 30.0)
+    # Camera field of view: converts an off-centre error in pixels into real
+    # degrees, which is what keeps `gain` a damping factor instead of a magic
+    # tuning constant. Measure it once; an approximate value is absorbed by gain.
+    fov_h_deg: float = 60.0
+    fov_v_deg: float = 45.0
+    gain: float = 0.5  # fraction of the error corrected per frame; 1.0 overshoots
+    deadzone_deg: float = 1.0  # close enough: don't move, don't buzz
+    # Sign depends on how the rig is physically assembled, and cannot be known
+    # until it exists. Flip these on first power-up if it drives the wrong way.
+    invert_pan: bool = False
+    invert_tilt: bool = False
     ref_box_height_px: float = 200.0  # bbox height at the reference distance
     ref_distance_m: float = 1.0
 
@@ -98,6 +111,12 @@ class PolicyConfig:
             raise ConfigError("policy.ema_alpha must be in (0,1]")
         if self.min_hits < 1:
             raise ConfigError("policy.min_hits must be >= 1")
+        if not 0.0 < self.gain <= 1.0:
+            raise ConfigError(f"policy.gain must be in (0,1], got {self.gain}")
+        if self.fov_h_deg <= 0 or self.fov_v_deg <= 0:
+            raise ConfigError("policy.fov_h_deg and fov_v_deg must be > 0")
+        if self.deadzone_deg < 0:
+            raise ConfigError("policy.deadzone_deg must be >= 0")
         for z in self.zones:
             z.validate()
 

@@ -76,7 +76,7 @@ frames rather than *all, stale* frames — the right tradeoff for real-time cont
 | `pdp/sources/` | `FrameSource` ABC → `FileSource`, `WebcamSource` (Camo), `RTSPSource` | `FrameSource` |
 | `pdp/detect/` | Ultralytics wrapper: load, warmup, half/AMP, thresholds, `Detection` mapping | `Detector` |
 | `pdp/track/` | ByteTrack / BoT-SORT, assigns persistent `track_id` | `Tracker` |
-| `pdp/logic/` | ROI zones, per-class priority, distance proxy, debounce → `Command`s | `Policy` |
+| `pdp/logic/` | ROI zones, per-class priority, distance proxy, debounce, closed-loop aiming → `Command`s | `Policy` |
 | `pdp/control/` | `ControlBackend` ABC → `NullBackend` (log-only), `SerialServoBackend`; `ControlLoop` applies the safety rules | `ControlBackend` |
 | `pdp/sinks/` | Annotated writer, JSONL event log, FPS/latency metrics, preview window | `Sink` |
 | `pdp/cli.py` | `train · val · predict · live · export · bench · ingest` | — |
@@ -304,10 +304,22 @@ PC ──USB serial──► Arduino/ESP32 ──PWM──► servos   (add PCA9
 Line protocol, ASCII, ack'd — trivially debuggable in a serial monitor:
 
 ```
-→  S <ch> <deg> <speed>\n     set channel target
+→  S <ch> <deg> [<speed>]\n   set channel target (speed accepted but unused:
+                              ControlLoop does its own rate limiting)
 →  P\n                        ping
 ←  OK <ch> <deg>\n  |  ERR <code>\n
+←  READY pdp-servo v1 ch=2\n  once, on boot
 ```
+
+`READY` exists because opening the port resets the board, and the ~2 s bootloader window swallows any
+command sent into it without an error. The PC waits for the banner instead of guessing at a sleep.
+
+Error codes: `1` malformed, `2` bad channel, `3` angle outside the firmware limits (rejected, never
+silently clipped), `4` overlong line, `5` watchdog tripped.
+
+Implemented in `firmware/pdp_servo/pdp_servo.ino`, against an **Arduino Uno with two DS3218** servos on
+pins 9 and 10. The Uno is enough here precisely because these are ordinary PWM servos: the earlier
+STS3215 option was dropped since its serial bus needs a spare hardware UART the Uno doesn't have.
 
 Safety rules, all enforced on the **firmware** side too, never only in Python (the PC can crash, hang,
 or lose USB):
@@ -321,6 +333,51 @@ or lose USB):
 
 This is where the tracker earns its place: acting on raw per-frame detections produces jitter and
 flicker. Acting on a *track* with a stable ID and a few frames of persistence produces smooth motion.
+
+### Keep-alive
+
+`ControlLoop` only writes when an angle actually changes — repeating an identical command every tick
+would flood the link for nothing. But a rig *holding its aim* then sends nothing at all, which the
+firmware watchdog cannot distinguish from a dead PC, and it would recentre mid-shot. So the loop sends
+`P` whenever it has gone half a watchdog period without writing. Half, so that one lost ping is not
+enough to trip it.
+
+### Aiming: closed loop, not absolute mapping
+
+**The camera is mounted on the rig.** That single fact decides the control law, and getting it wrong
+produces a system that oscillates forever without ever being obviously broken.
+
+With the camera riding along, image position no longer tells you where the target *is* — it tells you
+how far off you are aimed. Mapping image position to an absolute angle chases its own tail: centre the
+target, the computed angle returns to zero, the rig swings away, the target is off-centre again.
+
+`PanTiltPolicy` therefore corrects on error. The offset from frame centre is converted into real
+degrees through the camera's field of view, and `gain` (default 0.5) of that correction is added to the
+current commanded angle each frame:
+
+```python
+err_x = (cx_norm - 0.5) * fov_h_deg
+pan = clamp(pan + gain * err_x, *pan_range_deg)
+```
+
+Four consequences worth stating, because each one is a bug if you get it backwards:
+
+- **Never correct the full error.** The servo is still moving while the next frame is captured; `gain`
+  of 1.0 overshoots and rings. Half converges in three or four frames — about a tenth of a second.
+- **Going through the field of view keeps `gain` a damping factor**, not a magic constant tuned by
+  trial and error. An approximate FOV is absorbed by `gain`; a wrong *model* is not.
+- **Smooth the error, not the output.** Filtering the servo angle adds lag between where the rig is
+  and where we think it is, which is exactly what causes overshoot. Filtering the measurement does not.
+- **Clamp the accumulator itself.** Otherwise it winds past the travel limit while the target sits out
+  of reach, and then owes that much travel before it responds again.
+
+A P controller, deliberately: an integral term winds up against the travel limits, and a derivative
+term amplifies precisely the detector noise we are trying to filter. Add them later with real data if
+the loop proves too slow — not on principle.
+
+Two things cannot be known until the rig physically exists: the sign of each axis (`invert_pan`,
+`invert_tilt` — flip them on first power-up if it drives away from the target) and the true field of
+view Camo delivers after any cropping.
 
 ---
 
@@ -389,9 +446,11 @@ and no hardware in the loop. Every later phase then changes exactly one componen
 1. **Which classes?** Needed to write `classes.yaml` and size the annotation effort.
 2. **Do datasets exist yet**, or is annotation starting from zero video?
 3. **Annotation tool** — Roboflow (fast, cloud) vs Label Studio (local, private)?
-4. **What do the servos do** — pan/tilt to track a target, or discrete avoidance moves? This determines
-   whether `Policy` outputs continuous angles or discrete states, and it is worth settling before
-   Phase 5.
+4. ~~**What do the servos do**~~ — **settled**: a 2-axis pan/tilt rig tracking a target, like a
+   security camera, **with the camera mounted on the rig**. `Policy` outputs continuous angles, and the
+   loop is closed (see §6). Hardware: Arduino Uno driving two DS3218 (180° variant) over PWM, with the
+   PC talking to it over the §6 line protocol. An earlier plan to use Feetech STS3215 serial-bus servos
+   was dropped: their bus needs a spare hardware UART, which the Uno does not have.
 5. **Frame budget** — target FPS and acceptable glass-to-servo latency.
 
 ---

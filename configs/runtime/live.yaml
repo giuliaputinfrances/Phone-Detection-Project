@@ -32,11 +32,24 @@ policy:
   min_conf: 0.45
   min_hits: 3
   max_misses: 5
-  ema_alpha: 0.35
+  ema_alpha: 0.35       # smooths the measured error, not the servo angle
   pan_channel: 0
   tilt_channel: 1
   pan_range_deg: [-45.0, 45.0]
   tilt_range_deg: [-30.0, 30.0]
+  # Closed loop: the camera rides on the rig, so the image gives the aiming
+  # error, not the target's position. The field of view turns that error into
+  # real degrees; gain is how much of it to correct per frame.
+  # iPhone 15 main camera (26 mm equivalent) cropped to 16:9. Derived from the
+  # optics, not measured here: verify it if aiming converges too slowly or
+  # overshoots, because Camo can crop the frame and the ultra-wide lens is a
+  # completely different number (~120 deg).
+  fov_h_deg: 69.0
+  fov_v_deg: 42.0
+  gain: 0.5             # 1.0 corrects the whole error and overshoots
+  deadzone_deg: 1.0
+  invert_pan: false     # flip on first power-up if the rig drives away
+  invert_tilt: false
   priority:
     person: 30
     cone: 20

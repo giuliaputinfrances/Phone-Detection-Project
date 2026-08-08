@@ -10,12 +10,16 @@ class RecordingBackend(ControlBackend):
     def __init__(self):
         self.applied: list[tuple[int, float]] = []
         self.connected = False
+        self.pings = 0
 
     def connect(self):
         self.connected = True
 
     def apply(self, channel, target_deg, reason=""):
         self.applied.append((channel, round(target_deg, 3)))
+
+    def ping(self):
+        self.pings += 1
 
     def close(self):
         self.connected = False
@@ -89,6 +93,38 @@ def test_deadband_suppresses_micro_moves():
             loop.submit([cmd(0, 10.4)])
             time.sleep(0.01)
         assert len(be.angles(0)) == n, "deadband did not suppress sub-threshold moves"
+    finally:
+        loop.stop()
+
+
+def test_pings_while_holding_position():
+    # A rig holding its aim sends no angles at all. Without a keep-alive the
+    # firmware watchdog would read that silence as a dead PC and recentre.
+    be = RecordingBackend()
+    loop = ControlLoop(be, cfg(slew_dps=100000.0, watchdog_ms=60.0))
+    loop.start()
+    try:
+        loop.submit([cmd(0, 20.0)])
+        time.sleep(0.15)  # watchdog fires; the rig settles at neutral
+        moves_before = len(be.applied)
+        time.sleep(0.15)  # settled now: nothing to send but keep-alives
+        assert len(be.applied) == moves_before, "backend moved while holding"
+        assert be.pings > 0, "no keep-alive sent while holding position"
+    finally:
+        loop.stop()
+
+
+def test_no_pings_while_actively_moving():
+    # Every write already proves the PC is alive, so pinging on top of them
+    # would be pure noise on the wire.
+    be = RecordingBackend()
+    loop = ControlLoop(be, cfg(slew_dps=20.0, deadband_deg=0.0, watchdog_ms=200.0))
+    loop.start()
+    try:
+        for _ in range(10):  # keep feeding: it slews the whole time
+            loop.submit([cmd(0, 45.0)])
+            time.sleep(0.02)
+        assert be.pings == 0, "pinged while the writes were already proving liveness"
     finally:
         loop.stop()
 

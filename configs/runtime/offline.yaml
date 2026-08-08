@@ -21,6 +21,12 @@ policy:
   min_hits: 3
   max_misses: 5
   ema_alpha: 0.35
+  # Closed-loop aiming. On a recorded video the rig doesn't actually move, so
+  # the commands here are "what it would have done" rather than a real loop.
+  fov_h_deg: 69.0       # iPhone 15 main camera at 16:9
+  fov_v_deg: 42.0
+  gain: 0.5
+  deadzone_deg: 1.0
   priority:
     person: 30
     cone: 20

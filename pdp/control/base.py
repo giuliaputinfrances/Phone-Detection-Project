@@ -18,6 +18,15 @@ class ControlBackend(abc.ABC):
     @abc.abstractmethod
     def close(self) -> None: ...
 
+    def ping(self) -> None:
+        """Prove the PC is still alive without commanding a move.
+
+        ControlLoop only writes when an angle actually changes, so a rig that is
+        holding its aim sends nothing at all — and a device with its own
+        watchdog would read that silence as "the PC died" and recentre itself.
+        Backends with no watchdog can ignore this, hence the no-op default.
+        """
+
     def submit(self, commands: list[Command]) -> None:
         for cmd in commands:
             self.apply(cmd.channel, cmd.target_deg, cmd.reason)

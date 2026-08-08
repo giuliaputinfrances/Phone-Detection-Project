@@ -37,15 +37,17 @@ class ControlLoop:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_cmd_ts = 0.0
+        self._last_write_ts = 0.0
         self._watchdog_tripped = False
         self.sent_count = 0
+        self.ping_count = 0
 
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
         self.backend.connect()
         self._stop.clear()
-        self._last_cmd_ts = time.monotonic()
+        self._last_cmd_ts = self._last_write_ts = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="control", daemon=True)
         self._thread.start()
 
@@ -156,6 +158,19 @@ class ControlLoop:
                     self.sent_count += 1
                 except Exception:
                     log.exception("control: backend.apply failed on ch=%d", ch)
+
+            # Keep-alive. A rig holding its aim produces no moves at all, and a
+            # firmware watchdog can't tell that apart from a dead PC. Half the
+            # watchdog period leaves room for one lost ping before it trips.
+            if moves:
+                self._last_write_ts = now
+            elif (now - self._last_write_ts) * 1000.0 > self.cfg.watchdog_ms / 2.0:
+                try:
+                    self.backend.ping()
+                    self.ping_count += 1
+                except Exception:
+                    log.exception("control: backend.ping failed")
+                self._last_write_ts = now
 
             next_tick += period
             sleep = next_tick - time.monotonic()
