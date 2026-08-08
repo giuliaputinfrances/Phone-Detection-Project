@@ -18,6 +18,7 @@ runs/
 *.engine
 *.mp4
 *.avi
+.claude
 
 # Ultralytics stray downloads
 yolo*.pt
