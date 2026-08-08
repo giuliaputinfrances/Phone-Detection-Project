@@ -1,0 +1,14 @@
+# Class taxonomy — the single source of truth.
+#
+# APPEND ONLY. Never reorder or delete: class ids are baked into every label
+# .txt file already annotated, and reordering silently corrupts all of them.
+# To retire a class, keep its id and stop annotating it.
+#
+# datasets/<name>/data.yaml is GENERATED from this file by `pdp build-dataset`.
+#
+# TODO: replace this placeholder list with the real obstacle set.
+classes:
+  0: cone
+  1: box
+  2: person
+  3: chair

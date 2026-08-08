@@ -1,0 +1,46 @@
+# Offline run over a recorded video. This is the debugging configuration:
+# no phone, no hardware, fully repeatable.
+
+name: offline
+
+source:
+  kind: file
+  path: datasets/raw/sample.mp4   # override with: pdp predict -s <video>
+  threaded: false                 # deterministic frame order; no dropping
+
+detector:
+  weights: yolo26n.pt             # swap for runs/detect/<run>/weights/best.pt
+  device: auto
+  imgsz: 640
+  conf: 0.25
+  tracker: bytetrack.yaml
+
+policy:
+  mode: pan_tilt
+  min_conf: 0.4
+  min_hits: 3
+  max_misses: 5
+  ema_alpha: 0.35
+  priority:
+    person: 30
+    cone: 20
+    box: 10
+    chair: 5
+  zones:
+    - {name: left,   x0: 0.0,  x1: 0.35}
+    - {name: center, x0: 0.35, x1: 0.65}
+    - {name: right,  x0: 0.65, x1: 1.0}
+
+control:
+  backend: none                   # log commands only
+  rate_hz: 50
+  watchdog_ms: 500
+  slew_dps: 180
+  deadband_deg: 1.0
+
+sinks:
+  preview: false
+  video_out: runs/offline/annotated.mp4
+  events_out: runs/offline/events.jsonl
+  draw_zones: true
+  metrics_every: 60

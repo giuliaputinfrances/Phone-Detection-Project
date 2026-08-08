@@ -1,0 +1,31 @@
+# Baseline fine-tune: YOLO26-nano on the first obstacle dataset.
+# One file per experiment; copy and edit rather than mutating this one, so runs
+# stay diffable.
+
+name: obstacles_v1_n_e100
+model: yolo26n.pt              # COCO-pretrained; n -> s -> m as needed
+data: datasets/obstacles_v1/data.yaml
+
+args:
+  epochs: 100
+  imgsz: 640                   # 1280 is the biggest win for small/distant objects
+  batch: 16                    # fits 8 GB @ 640 with AMP; use 0.80 for autobatch
+  device: 0
+  workers: 4
+  amp: true
+  cache: ram
+  seed: 0
+  deterministic: true
+  patience: 20                 # default 100 is for long from-scratch runs
+
+  # Small-dataset fine-tuning. freeze=10 keeps the COCO backbone, which is the
+  # right call while the classes stay COCO-adjacent. Use freeze=23 (head only)
+  # if the dataset turns out very small, and drop mosaic to 0.0 if val loss
+  # diverges early.
+  freeze: 10
+  optimizer: AdamW
+  lr0: 0.001
+  lrf: 0.01
+  mosaic: 0.5
+
+  project: runs/detect

@@ -1,0 +1,30 @@
+# Environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Data & artifacts (versioned by MANIFEST, not by git)
+datasets/**
+!datasets/**/MANIFEST.json
+!datasets/.gitkeep
+models/**
+!models/.gitkeep
+runs/
+*.pt
+*.onnx
+*.engine
+*.mp4
+*.avi
+
+# Ultralytics stray downloads
+yolo*.pt
+*.yaml.bak
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
