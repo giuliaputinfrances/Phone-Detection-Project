@@ -67,6 +67,37 @@ Key invariants, each of which exists for a reason documented in ARCHITECTURE.md:
 - **`ControlLoop` enforces clamp, slew, deadband, watchdog** in Python; the real firmware duplicates all four, because the PC can crash or lose USB. The deadband applies to the *request*, not the output (see the comment in `loop.py`).
 - **`NullBackend` (`control.backend: none`) is the default** and logs the commands it would send, so the whole pipeline runs end-to-end without hardware. `SerialServoBackend` is written against the line protocol in ARCHITECTURE.md §6 but has never talked to a board.
 
+## Where things live
+
+| Path | What it is |
+|---|---|
+| `docs/ARCHITECTURE.md` | Design doc of record: dataflow, threading, contracts, roadmap (§8), open questions (§10) |
+| `pdp/types.py` | The four frozen dataclasses every stage passes around. Change with care — it is the cross-cutting contract |
+| `pdp/pipeline.py` | The one run loop, shared by `predict` and `live` |
+| `pdp/cli.py` | `pdp` entry point: argparse wiring only, with imports deferred per subcommand so startup stays fast |
+| `pdp/config/schema.py` | Runtime config dataclasses + YAML loading and validation |
+| `pdp/env.py` | `check-env`: fails loudly on a CPU-only torch build |
+| `pdp/training.py` | `train` / `val` / `export` / `bench`, plus the git-SHA + manifest run snapshot |
+| `pdp/sources/base.py` | `FrameSource` ABC — the seam for file / webcam / future RTSP |
+| `pdp/sources/file.py` | Video-file source (stride, loop, max-frames) |
+| `pdp/sources/webcam.py` | Camo/webcam via DirectShow; resolves devices **by name**, reads back the mode actually granted |
+| `pdp/sources/threaded.py` | Depth-1 drop-oldest capture thread, so inference never consumes stale frames |
+| `pdp/detect/detector.py` | The only model-aware file: ultralytics load, warmup, tracking, `Detection` mapping |
+| `pdp/logic/policy.py` | Tracks → intent: priority, zones, persistence, EMA, distance proxy → `Command`s |
+| `pdp/control/loop.py` | Rate-limited control thread enforcing clamp / slew / deadband / watchdog |
+| `pdp/control/null.py` | Default backend: logs the commands it would have sent |
+| `pdp/control/serial_servo.py` | Phase 7 serial backend — written, never run against hardware |
+| `pdp/sinks/` | `draw.py` (annotation/HUD), `writers.py` (video writer, JSONL events, metrics) |
+| `pdp/data/build.py` | Raw session exports → versioned dataset + `data.yaml` + `MANIFEST.json` |
+| `pdp/data/validate.py` | Dataset checks: coord ranges, orphans, class ids, histograms |
+| `pdp/data/frames.py` | Video → low-fps sampled frames, dropping near-duplicates so annotation hours aren't wasted |
+| `pdp/data/hashing.py` | dHash (**not** aHash — see its docstring) perceptual hashing, used for both dedupe and cross-split leak detection |
+| `configs/classes.yaml` | Class taxonomy, append-only. Currently still the placeholder list |
+| `configs/train/*.yaml` | One file per training experiment |
+| `configs/runtime/` | `live.yaml` (Camo) and `offline.yaml` (video file) |
+| `scripts/` | Thin standalone shims over `pdp check-env` / `pdp cameras` |
+| `datasets/`, `models/`, `runs/` | Git-ignored artifacts (only `MANIFEST.json` is tracked). All three are empty today |
+
 ## Config
 
 Two independent config systems, both YAML, neither using a validation library:
