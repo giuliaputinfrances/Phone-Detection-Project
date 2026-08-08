@@ -1,0 +1,27 @@
+# Second dataset version: balloons + hands.
+# Copied from obstacles_v1_n.yaml so the two runs stay diffable — the only
+# change is the dataset it points at.
+
+name: obstacles_v4_n_e100
+model: yolo26n.pt              # always fine-tune from COCO, not from the last run
+data: datasets/obstacles_v4/data.yaml
+
+args:
+  epochs: 100
+  imgsz: 640
+  batch: 16
+  device: 0
+  workers: 4
+  amp: true
+  cache: ram
+  seed: 0
+  deterministic: true
+  patience: 20
+
+  freeze: 10
+  optimizer: AdamW
+  lr0: 0.001
+  lrf: 0.01
+  mosaic: 0.5
+
+  project: runs/detect

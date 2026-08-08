@@ -15,12 +15,15 @@ source:
   width: 1280
   height: 720
   fps: 60
-  backend: dshow        # try msmf if dshow won't open the device
+  backend: msmf         # dshow *opens* the Camo device but delivers all-black
+                        # frames on this machine; msmf delivers real pixels.
+                        # Note CAP_PROP_BUFFERSIZE is ignored under msmf — the
+                        # threaded drop-oldest source is what keeps latency down.
   fourcc: MJPG          # YUY2 silently caps throughput at 720p+
   threaded: true        # drop-oldest capture: fewer, current frames
 
 detector:
-  weights: yolo26n.pt   # swap for runs/detect/<run>/weights/best.pt
+  weights: runs/detect/runs/detect/obstacles_v4_n_e100/weights/best.pt
   device: auto
   imgsz: 640
   conf: 0.35            # higher than offline: fewer false servo triggers
