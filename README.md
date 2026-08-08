@@ -9,7 +9,7 @@ the reasoning behind each choice — is in [`docs/ARCHITECTURE.md`](docs/ARCHITE
 ## Setup
 
 ```powershell
-py -3.12 -m venv .venv
+py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
 pip install -e ".[dev]"

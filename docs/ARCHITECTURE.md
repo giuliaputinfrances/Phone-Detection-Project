@@ -7,24 +7,27 @@ eventually driving servos over a serial link.
 
 ---
 
-## 0. Environment baseline (measured 2026-08-08)
+## 0. Environment baseline (re-measured 2026-08-08 on the current machine)
 
 | Item | Value | Action |
 |---|---|---|
-| GPU | NVIDIA RTX 3000 Ada Laptop, 8 GB VRAM | Usable for training `yolo26n/s`, tight for `m`, no `l/x` at 640 |
-| Driver / CUDA | 595.95 / CUDA 13.2 | Supports cu12x and cu13x torch wheels |
-| Global Python | 3.14.4 | Do **not** use directly |
-| Installed torch | 2.12.0+**cpu** (`torch.cuda.is_available() == False`) | Must be replaced with a CUDA build |
+| GPU | NVIDIA GeForce RTX 4070 Laptop, 8 GB VRAM | Usable for training `yolo26n/s`, tight for `m`, no `l/x` at 640 |
+| Driver | 580.97 | Recent enough for cu12x wheels (backward compatible) |
+| Available Pythons | 3.14 (global), 3.13, 3.11 — no 3.12 | Use a venv on **3.13** |
 | ultralytics | not installed | Install 8.4.x (YOLO26 line) |
 
-**Decision: create an isolated venv on Python 3.12.**
-Python 3.14 is new enough that the long tail of CV wheels (`opencv-python`, `onnxruntime-gpu`,
-`tensorrt`, `pygrabber`) has patchy `cp314` coverage. 3.12 avoids source builds. This is a
-recommendation, not a measured blocker — if you prefer 3.14, the fallback is verifying each wheel
-individually.
+> An earlier revision of this table recorded an RTX 3000 Ada on driver 595.95 and a
+> pre-installed CPU torch 2.12. Neither matches this machine; that baseline appears to have been
+> taken elsewhere. The 8 GB VRAM ceiling is the same, so every sizing decision below still holds.
+
+**Decision: create an isolated venv on Python 3.13.**
+The original plan called for 3.12, on the reasoning that 3.14 is new enough for the long tail of CV
+wheels (`opencv-python`, `onnxruntime-gpu`, `tensorrt`, `pygrabber`) to have patchy `cp314` coverage.
+That reasoning stands for 3.14 but no longer applies to 3.13, which has full wheel coverage — and no
+3.12 is installed here, so 3.13 avoids downloading an interpreter for no gain.
 
 ```powershell
-py -3.12 -m venv .venv
+py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
